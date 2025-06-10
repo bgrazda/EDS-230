@@ -1,0 +1,108 @@
+---
+title: "Calibration Part 1"
+author: 'Brooke Grazda'
+editor: visual
+format:
+  html:
+    embed-resources: true
+---
+
+```{r}
+library(tidyverse)
+library(here)
+```
+
+## 1. Develop another metric of performance (different from in-class example)
+The metrics of performance in this analysis are 
+- `annual_max_cor` – correlation of annual peak flows (model vs obs)
+- `high_month_cor` – correlation for flows in a key month (e.g., May)
+```{r, message=FALSE, warning=FALSE}
+#| code-fold: true
+#| quiet: true
+msage = readRDS(here("Data/msage.RDS"))
+
+# first rearrange so we can plot all results
+msagel = msage %>% gather(key="run",value="str", -date, -month, -day, -year, -wy,-obs)
+
+source(here("R/compute_highflow_metric.R"))
+```
+## 2. Apply to all runs in the dataset 
+```{r}
+#| code-fold: true
+#| quiet: true
+# use apply to compute for all the data
+res = msage %>% select(-date, -month, -day, -year, -wy, -obs ) %>% apply(2,FUN=compute_highflowmetrics, o=msage$obs, month=msage$month, day=msage$day, year=msage$year, wy=msage$wy)
+
+# extract information from the list
+results = as.data.frame(matrix(unlist(res), byrow=T, ncol=4))
+colnames(results)=c("annual_max_err","annual_max_cor", "high_month_err",
+              "high_month_cor")
+
+# interesting to look at range of metrics - could use this to decide on
+# acceptable values
+summary(results)
+
+# graph range of performance measures
+resultsl = results %>% gather(key="metric",value="value")
+ggplot(resultsl, aes(metric, value))+geom_boxplot()+facet_wrap(~metric, scales="free")
+
+```
+
+
+## 3-4. Find the "best" parameter set based on your metric and decide on a threshold for acceptability
+Lets keep all parameters that give reasonable values with `accept_par`. 
+
+```{r}
+# first we need to be able to identify parameter sets in results
+
+ID = msage %>% select(-date, -month, -day, -year, -wy, -obs ) %>%  colnames()
+results$id = ID
+
+# now we can pick only good parameters
+                    
+# accept_par = subset(results, annual_max_cor > 0.7 & high_month_cor > 0.7 & abs(annual_max_err < 0.2) & abs(high_month_err) < 5)
+# nrow(accept_par) # 53 rows
+# 
+# accept_par = subset(results,
+#   annual_max_cor > 0.6 &
+#   high_month_cor > 0.6 &
+#   abs(annual_max_err) < 0.5 &
+#   abs(high_month_err) < 6)
+# nrow(accept_par) # 74 rows
+
+accept_par = subset(results,
+  annual_max_cor > 0.7 &
+  high_month_cor > 0.7 &
+  abs(annual_max_err) < 0.2 &      # less than 20% error
+  abs(high_month_err) < 0.2)       # less than 20% error
+
+nrow(accept_par) # 18 rows
+```
+
+## 5. Plot results for all acceptable parameters
+```{r}
+#| code-fold: true
+#| quiet: true
+#  plot these to compare with all parameters
+msagel$accept = ifelse(msagel$run %in% accept_par$id, TRUE, FALSE)
+ggplot(subset(msagel, accept), aes(as.Date(date), str))+geom_line()
+
+# or with observed but focus on August flow
+msagel_mth = msagel %>% select(-date,-day) %>%  group_by(month, wy, run, accept) %>% summarise(str=mean(str, na.rm=T), obs=mean(obs, na.rm=T))
+
+# just May flow
+ggplot(subset(msagel_mth,  month==5 & accept),
+       aes(wy, str, group=wy))+geom_boxplot(position="dodge")+
+  geom_point(aes(wy, obs), col="red")+labs(y="Streamflow", x="Date")
+
+mean_may_obs = mean(subset(msagel_mth, month==5)$obs) 
+ggplot(subset(msagel_mth, month==5), aes(accept, str))+geom_boxplot()+
+  geom_hline(yintercept=mean_may_obs, col="red")+labs(y="Streamflow", x="Date")
+
+```
+
+
+
+
+
+
